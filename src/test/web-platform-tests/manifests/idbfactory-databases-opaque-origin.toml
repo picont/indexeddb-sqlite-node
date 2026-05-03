@@ -1,0 +1,2 @@
+# Relies on specific errors being thrown in iframes/workers, which isn't relevant for Node
+skip = true
