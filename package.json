@@ -1,21 +1,18 @@
 {
-    "name": "fake-indexeddb",
-    "version": "6.2.5",
-    "description": "Fake IndexedDB: a pure JS in-memory implementation of the IndexedDB API",
-    "homepage": "https://github.com/dumbmatter/fakeIndexedDB",
+    "name": "indexeddb-sqlite-node",
+    "version": "0.0.1",
+    "description": "IndexedDB SQLite for Node.js: A Node.js implementation of the IndexedDB API with a persistent SQLite storage backend.",
+    "homepage": "https://github.com/picont/indexeddb-sqlite-node",
     "repository": {
         "type": "git",
-        "url": "git://github.com/dumbmatter/fakeIndexedDB.git"
-    },
-    "bugs": {
-        "url": "https://github.com/dumbmatter/fakeIndexedDB/issues"
+        "url": "git@github.com:picont/indexeddb-sqlite-node.git"
     },
     "keywords": [
         "indexeddb",
         "datastore",
         "database",
         "embedded",
-        "nosql",
+        "sqlite",
         "in-memory",
         "polyfill",
         "shim"
