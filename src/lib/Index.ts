@@ -39,7 +39,14 @@ class Index {
 
     // http://www.w3.org/TR/2015/REC-IndexedDB-20150108/#dfn-steps-for-retrieving-a-value-from-an-index
     public getKey(key: FDBKeyRange | Key) {
-        const record = this.records.get(key);
+        const sqliteRecord =
+            this.rawObjectStore.rawDatabase.sqliteReadBackend?.getIndexRecord(
+                this.rawObjectStore.rawDatabase.name,
+                this.rawObjectStore.name,
+                this.name,
+                key,
+            );
+        const record = sqliteRecord ?? this.records.get(key);
 
         return record !== undefined ? record.value : undefined;
     }
@@ -54,8 +61,18 @@ class Index {
             count = Infinity;
         }
 
+        const sqliteRecords =
+            this.rawObjectStore.rawDatabase.sqliteReadBackend?.getIndexRecords(
+                this.rawObjectStore.rawDatabase.name,
+                this.rawObjectStore.name,
+                this.name,
+                range,
+                direction,
+            );
+
         const records = [];
-        for (const record of this.records.values(range, direction)) {
+        const source = sqliteRecords ?? this.records.values(range, direction);
+        for (const record of source) {
             records.push(structuredClone(record.value));
             if (records.length >= count) {
                 break;
@@ -67,7 +84,14 @@ class Index {
 
     // http://www.w3.org/TR/2015/REC-IndexedDB-20150108/#index-referenced-value-retrieval-operation
     public getValue(key: FDBKeyRange | Key) {
-        const record = this.records.get(key);
+        const sqliteRecord =
+            this.rawObjectStore.rawDatabase.sqliteReadBackend?.getIndexRecord(
+                this.rawObjectStore.rawDatabase.name,
+                this.rawObjectStore.name,
+                this.name,
+                key,
+            );
+        const record = sqliteRecord ?? this.records.get(key);
 
         return record !== undefined
             ? this.rawObjectStore.getValue(record.value)
@@ -84,8 +108,18 @@ class Index {
             count = Infinity;
         }
 
+        const sqliteRecords =
+            this.rawObjectStore.rawDatabase.sqliteReadBackend?.getIndexRecords(
+                this.rawObjectStore.rawDatabase.name,
+                this.rawObjectStore.name,
+                this.name,
+                range,
+                direction,
+            );
+
         const records = [];
-        for (const record of this.records.values(range, direction)) {
+        const source = sqliteRecords ?? this.records.values(range, direction);
+        for (const record of source) {
             records.push(this.rawObjectStore.getValue(record.value));
             if (records.length >= count) {
                 break;
@@ -105,8 +139,18 @@ class Index {
             count = Infinity;
         }
 
+        const sqliteRecords =
+            this.rawObjectStore.rawDatabase.sqliteReadBackend?.getIndexRecords(
+                this.rawObjectStore.rawDatabase.name,
+                this.rawObjectStore.name,
+                this.name,
+                range,
+                direction,
+            );
+
         const records = [];
-        for (const record of this.records.values(range, direction)) {
+        const source = sqliteRecords ?? this.records.values(range, direction);
+        for (const record of source) {
             records.push(
                 new FDBRecord(
                     structuredClone(record.key),
@@ -215,6 +259,15 @@ class Index {
     }
 
     public count(range: FDBKeyRange) {
+        if (this.rawObjectStore.rawDatabase.sqliteReadBackend) {
+            return this.rawObjectStore.rawDatabase.sqliteReadBackend.getIndexRecords(
+                this.rawObjectStore.rawDatabase.name,
+                this.rawObjectStore.name,
+                this.name,
+                range,
+            ).length;
+        }
+
         let count = 0;
 
         // eslint-disable-next-line @typescript-eslint/no-unused-vars

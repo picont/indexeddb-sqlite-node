@@ -84,6 +84,10 @@
         "./lib/forceCloseDatabase": {
             "import": "./build/esm/forceCloseDatabase.js",
             "require": "./build/cjs/forceCloseDatabase.js"
+        },
+        "./sqlite": {
+            "import": "./build/esm/sqlite.js",
+            "require": "./build/cjs/sqlite.js"
         }
     },
     "types": "./types.d.ts",
