@@ -1,8 +1,12 @@
 import * as assert from "assert";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
 import fakeIndexedDB from "../../fakeIndexedDB.js";
 import FDBFactory from "../../FDBFactory.js";
 import FDBKeyRange from "../../FDBKeyRange.js";
 import FakeDOMStringList from "../../lib/FakeDOMStringList.js";
+import SQLiteFactoryStorageBackend from "../../storage/SQLiteFactoryStorageBackend.js";
 import type FDBDatabase from "../../FDBDatabase.js";
 import type FDBCursorWithValue from "../../FDBCursorWithValue.js";
 import type { TransactionMode } from "../../lib/types.js";
@@ -1125,5 +1129,315 @@ describe("fakeIndexedDB Tests", () => {
         assert.deepStrictEqual(v1, { id: 1, val: "a" });
         assert.deepStrictEqual(v2, { id: 2, val: "b" });
         assert.equal(v3, undefined);
+    });
+
+    it("persists data with SQLiteFactoryStorageBackend", async () => {
+        const sqlitePath = path.join(
+            os.tmpdir(),
+            `fake-indexeddb-${Date.now()}-${Math.random()}.sqlite`,
+        );
+        const dbName = `sqlite-${Math.random()}`;
+
+        try {
+            const factory1 = new FDBFactory({
+                storage: new SQLiteFactoryStorageBackend(sqlitePath),
+            });
+
+            await new Promise<void>((resolve, reject) => {
+                const open = factory1.open(dbName, 1);
+                open.onupgradeneeded = () => {
+                    const db = open.result;
+                    db.createObjectStore("items", { keyPath: "id" });
+                };
+                open.onsuccess = () => {
+                    const db = open.result;
+                    const tx = db.transaction("items", "readwrite");
+                    tx.objectStore("items").put({ id: 1, value: "hello" });
+                    tx.oncomplete = () => {
+                        db.close();
+                        resolve();
+                    };
+                    tx.onerror = () => reject(tx.error);
+                };
+                open.onerror = () => reject(open.error);
+            });
+
+            const factory2 = new FDBFactory({
+                storage: new SQLiteFactoryStorageBackend(sqlitePath),
+            });
+
+            await new Promise<void>((resolve, reject) => {
+                const open = factory2.open(dbName);
+                open.onsuccess = () => {
+                    const db = open.result;
+                    const req = db
+                        .transaction("items", "readonly")
+                        .objectStore("items")
+                        .get(1);
+                    req.onsuccess = () => {
+                        assert.deepStrictEqual(req.result, {
+                            id: 1,
+                            value: "hello",
+                        });
+                        db.close();
+                        resolve();
+                    };
+                    req.onerror = () => reject(req.error);
+                };
+                open.onerror = () => reject(open.error);
+            });
+        } finally {
+            fs.rmSync(sqlitePath, { force: true });
+        }
+    });
+
+    it("persists binary keys and typed array values with SQLite backend", async () => {
+        const sqlitePath = path.join(
+            os.tmpdir(),
+            `fake-indexeddb-bin-${Date.now()}-${Math.random()}.sqlite`,
+        );
+        const dbName = `sqlite-bin-${Math.random()}`;
+
+        try {
+            const factory1 = new FDBFactory({
+                storage: new SQLiteFactoryStorageBackend(sqlitePath),
+            });
+            const key = new Uint8Array([1, 2, 3]).buffer;
+
+            await new Promise<void>((resolve, reject) => {
+                const open = factory1.open(dbName, 1);
+                open.onupgradeneeded = () => {
+                    open.result.createObjectStore("items");
+                };
+                open.onsuccess = () => {
+                    const db = open.result;
+                    const tx = db.transaction("items", "readwrite");
+                    tx.objectStore("items").put(
+                        { value: new Uint8Array([9, 8, 7]) },
+                        key,
+                    );
+                    tx.oncomplete = () => resolve();
+                    tx.onerror = () => reject(tx.error);
+                };
+                open.onerror = () => reject(open.error);
+            });
+
+            const factory2 = new FDBFactory({
+                storage: new SQLiteFactoryStorageBackend(sqlitePath),
+            });
+            await new Promise<void>((resolve, reject) => {
+                const open = factory2.open(dbName);
+                open.onsuccess = () => {
+                    const req = open.result
+                        .transaction("items")
+                        .objectStore("items")
+                        .get(key);
+                    req.onsuccess = () => {
+                        assert.deepStrictEqual(
+                            Array.from(req.result.value),
+                            [9, 8, 7],
+                        );
+                        resolve();
+                    };
+                    req.onerror = () => reject(req.error);
+                };
+                open.onerror = () => reject(open.error);
+            });
+        } finally {
+            fs.rmSync(sqlitePath, { force: true });
+        }
+    });
+
+    it("enforces unique indexes after restart with SQLite backend", async () => {
+        const sqlitePath = path.join(
+            os.tmpdir(),
+            `fake-indexeddb-unique-${Date.now()}-${Math.random()}.sqlite`,
+        );
+        const dbName = `sqlite-unique-${Math.random()}`;
+
+        try {
+            const factory1 = new FDBFactory({
+                storage: new SQLiteFactoryStorageBackend(sqlitePath),
+            });
+
+            await new Promise<void>((resolve, reject) => {
+                const open = factory1.open(dbName, 1);
+                open.onupgradeneeded = () => {
+                    const store = open.result.createObjectStore("items", {
+                        keyPath: "id",
+                    });
+                    store.createIndex("byValue", "value", { unique: true });
+                };
+                open.onsuccess = () => {
+                    const db = open.result;
+                    const tx = db.transaction("items", "readwrite");
+                    tx.objectStore("items").put({ id: 1, value: "a" });
+                    tx.oncomplete = () => resolve();
+                    tx.onerror = () => reject(tx.error);
+                };
+                open.onerror = () => reject(open.error);
+            });
+
+            const factory2 = new FDBFactory({
+                storage: new SQLiteFactoryStorageBackend(sqlitePath),
+            });
+            await new Promise<void>((resolve, reject) => {
+                const open = factory2.open(dbName);
+                open.onsuccess = () => {
+                    const db = open.result;
+                    const tx = db.transaction("items", "readwrite");
+                    const req = tx
+                        .objectStore("items")
+                        .put({ id: 2, value: "a" });
+                    req.onerror = () => resolve();
+                    req.onsuccess = () =>
+                        reject(new Error("Expected ConstraintError"));
+                };
+                open.onerror = () => reject(open.error);
+            });
+        } finally {
+            fs.rmSync(sqlitePath, { force: true });
+        }
+    });
+
+    it("does not persist aborted write transactions with SQLite backend", async () => {
+        const sqlitePath = path.join(
+            os.tmpdir(),
+            `fake-indexeddb-abort-${Date.now()}-${Math.random()}.sqlite`,
+        );
+        const dbName = `sqlite-abort-${Math.random()}`;
+
+        try {
+            const factory1 = new FDBFactory({
+                storage: new SQLiteFactoryStorageBackend(sqlitePath),
+            });
+
+            await new Promise<void>((resolve, reject) => {
+                const open = factory1.open(dbName, 1);
+                open.onupgradeneeded = () => {
+                    open.result.createObjectStore("items", { keyPath: "id" });
+                };
+                open.onsuccess = () => {
+                    const db = open.result;
+                    const tx = db.transaction("items", "readwrite");
+                    tx.objectStore("items").put({ id: 1, value: "x" });
+                    tx.abort();
+                    tx.onabort = () => resolve();
+                };
+                open.onerror = () => reject(open.error);
+            });
+
+            const factory2 = new FDBFactory({
+                storage: new SQLiteFactoryStorageBackend(sqlitePath),
+            });
+            await new Promise<void>((resolve, reject) => {
+                const open = factory2.open(dbName);
+                open.onsuccess = () => {
+                    const req = open.result
+                        .transaction("items")
+                        .objectStore("items")
+                        .count();
+                    req.onsuccess = () => {
+                        assert.strictEqual(req.result, 0);
+                        resolve();
+                    };
+                    req.onerror = () => reject(req.error);
+                };
+                open.onerror = () => reject(open.error);
+            });
+        } finally {
+            fs.rmSync(sqlitePath, { force: true });
+        }
+    });
+
+    it("SQLite readwrite transactions read their own overwrites", async () => {
+        const factory = new FDBFactory({
+            storage: new SQLiteFactoryStorageBackend(),
+        });
+        const dbName = `sqlite-read-own-writes-${Math.random()}`;
+
+        const db = await new Promise<FDBDatabase>((resolve, reject) => {
+            const open = factory.open(dbName, 1);
+            open.onupgradeneeded = () => {
+                open.result.createObjectStore("items");
+            };
+            open.onsuccess = () => resolve(open.result);
+            open.onerror = () => reject(open.error);
+        });
+
+        await new Promise<void>((resolve, reject) => {
+            const tx = db.transaction("items", "readwrite");
+            tx.objectStore("items").put("old", "key");
+            tx.oncomplete = () => resolve();
+            tx.onabort = () => reject(tx.error);
+        });
+
+        await new Promise<void>((resolve, reject) => {
+            const tx = db.transaction("items", "readwrite");
+            const store = tx.objectStore("items");
+            store.put("new", "key");
+            const req = store.get("key");
+            req.onsuccess = () => {
+                assert.strictEqual(req.result, "new");
+            };
+            tx.oncomplete = () => resolve();
+            tx.onabort = () => reject(tx.error);
+        });
+
+        await new Promise<void>((resolve, reject) => {
+            const req = db.transaction("items").objectStore("items").get("key");
+            req.onsuccess = () => {
+                assert.strictEqual(req.result, "new");
+                resolve();
+            };
+            req.onerror = () => reject(req.error);
+        });
+    });
+
+    it("serializes SQLite write transactions across database names", async () => {
+        const factory = new FDBFactory({
+            storage: new SQLiteFactoryStorageBackend(),
+        });
+
+        const openDb = (name: string) =>
+            new Promise<FDBDatabase>((resolve, reject) => {
+                const open = factory.open(name, 1);
+                open.onupgradeneeded = () => {
+                    open.result.createObjectStore("items");
+                };
+                open.onsuccess = () => resolve(open.result);
+                open.onerror = () => reject(open.error);
+            });
+
+        const dbA = await openDb(`sqlite-serialize-a-${Math.random()}`);
+        const dbB = await openDb(`sqlite-serialize-b-${Math.random()}`);
+        const events: string[] = [];
+
+        await new Promise<void>((resolve, reject) => {
+            const txA = dbA.transaction("items", "readwrite");
+            const storeA = txA.objectStore("items");
+            storeA.put("a1", "k1").onsuccess = () => {
+                events.push("a-started");
+                const txB = dbB.transaction("items", "readwrite");
+                txB.objectStore("items").put("b", "k").onsuccess = () => {
+                    events.push("b-started");
+                };
+                txB.oncomplete = () => {
+                    events.push("b-complete");
+                    resolve();
+                };
+                txB.onabort = () => reject(txB.error);
+            };
+            storeA.put("a2", "k2");
+            txA.oncomplete = () => events.push("a-complete");
+            txA.onabort = () => reject(txA.error);
+        });
+
+        assert.deepStrictEqual(events, [
+            "a-started",
+            "a-complete",
+            "b-started",
+            "b-complete",
+        ]);
     });
 });

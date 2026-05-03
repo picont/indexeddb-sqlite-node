@@ -38,8 +38,16 @@ class Index {
     }
 
     // http://www.w3.org/TR/2015/REC-IndexedDB-20150108/#dfn-steps-for-retrieving-a-value-from-an-index
-    public getKey(key: FDBKeyRange | Key) {
-        const record = this.records.get(key);
+    public getKey(key: FDBKeyRange | Key, useSQLiteReadBackend = true) {
+        const sqliteRecord = useSQLiteReadBackend
+            ? this.rawObjectStore.rawDatabase.sqliteReadBackend?.getIndexRecord(
+                  this.rawObjectStore.rawDatabase.name,
+                  this.rawObjectStore.name,
+                  this.name,
+                  key,
+              )
+            : undefined;
+        const record = sqliteRecord ?? this.records.get(key);
 
         return record !== undefined ? record.value : undefined;
     }
@@ -49,13 +57,25 @@ class Index {
         range: FDBKeyRange,
         count?: number,
         direction?: FDBCursorDirection,
+        useSQLiteReadBackend = true,
     ) {
         if (count === undefined || count === 0) {
             count = Infinity;
         }
 
+        const sqliteRecords = useSQLiteReadBackend
+            ? this.rawObjectStore.rawDatabase.sqliteReadBackend?.getIndexRecords(
+                  this.rawObjectStore.rawDatabase.name,
+                  this.rawObjectStore.name,
+                  this.name,
+                  range,
+                  direction,
+              )
+            : undefined;
+
         const records = [];
-        for (const record of this.records.values(range, direction)) {
+        const source = sqliteRecords ?? this.records.values(range, direction);
+        for (const record of source) {
             records.push(structuredClone(record.value));
             if (records.length >= count) {
                 break;
@@ -66,11 +86,19 @@ class Index {
     }
 
     // http://www.w3.org/TR/2015/REC-IndexedDB-20150108/#index-referenced-value-retrieval-operation
-    public getValue(key: FDBKeyRange | Key) {
-        const record = this.records.get(key);
+    public getValue(key: FDBKeyRange | Key, useSQLiteReadBackend = true) {
+        const sqliteRecord = useSQLiteReadBackend
+            ? this.rawObjectStore.rawDatabase.sqliteReadBackend?.getIndexRecord(
+                  this.rawObjectStore.rawDatabase.name,
+                  this.rawObjectStore.name,
+                  this.name,
+                  key,
+              )
+            : undefined;
+        const record = sqliteRecord ?? this.records.get(key);
 
         return record !== undefined
-            ? this.rawObjectStore.getValue(record.value)
+            ? this.rawObjectStore.getValue(record.value, useSQLiteReadBackend)
             : undefined;
     }
 
@@ -79,14 +107,31 @@ class Index {
         range: FDBKeyRange,
         count?: number,
         direction?: FDBCursorDirection,
+        useSQLiteReadBackend = true,
     ) {
         if (count === undefined || count === 0) {
             count = Infinity;
         }
 
+        const sqliteRecords = useSQLiteReadBackend
+            ? this.rawObjectStore.rawDatabase.sqliteReadBackend?.getIndexRecords(
+                  this.rawObjectStore.rawDatabase.name,
+                  this.rawObjectStore.name,
+                  this.name,
+                  range,
+                  direction,
+              )
+            : undefined;
+
         const records = [];
-        for (const record of this.records.values(range, direction)) {
-            records.push(this.rawObjectStore.getValue(record.value));
+        const source = sqliteRecords ?? this.records.values(range, direction);
+        for (const record of source) {
+            records.push(
+                this.rawObjectStore.getValue(
+                    record.value,
+                    useSQLiteReadBackend,
+                ),
+            );
             if (records.length >= count) {
                 break;
             }
@@ -100,18 +145,38 @@ class Index {
         range: FDBKeyRange,
         count?: number,
         direction?: FDBCursorDirection,
+        useSQLiteReadBackend = true,
     ) {
         if (count === undefined || count === 0) {
             count = Infinity;
         }
 
+        const sqliteRecords = useSQLiteReadBackend
+            ? this.rawObjectStore.rawDatabase.sqliteReadBackend?.getIndexRecords(
+                  this.rawObjectStore.rawDatabase.name,
+                  this.rawObjectStore.name,
+                  this.name,
+                  range,
+                  direction,
+              )
+            : undefined;
+
         const records = [];
-        for (const record of this.records.values(range, direction)) {
+        const source = sqliteRecords ?? this.records.values(range, direction);
+        for (const record of source) {
             records.push(
                 new FDBRecord(
                     structuredClone(record.key),
-                    structuredClone(this.rawObjectStore.getKey(record.value)),
-                    this.rawObjectStore.getValue(record.value),
+                    structuredClone(
+                        this.rawObjectStore.getKey(
+                            record.value,
+                            useSQLiteReadBackend,
+                        ),
+                    ),
+                    this.rawObjectStore.getValue(
+                        record.value,
+                        useSQLiteReadBackend,
+                    ),
                 ),
             );
             if (records.length >= count) {
@@ -214,7 +279,19 @@ class Index {
         });
     }
 
-    public count(range: FDBKeyRange) {
+    public count(range: FDBKeyRange, useSQLiteReadBackend = true) {
+        if (
+            useSQLiteReadBackend &&
+            this.rawObjectStore.rawDatabase.sqliteReadBackend
+        ) {
+            return this.rawObjectStore.rawDatabase.sqliteReadBackend.getIndexRecords(
+                this.rawObjectStore.rawDatabase.name,
+                this.rawObjectStore.name,
+                this.name,
+                range,
+            ).length;
+        }
+
         let count = 0;
 
         // eslint-disable-next-line @typescript-eslint/no-unused-vars

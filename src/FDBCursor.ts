@@ -16,8 +16,10 @@ import type {
     CursorSource,
     FDBCursorDirection,
     Key,
+    Record,
     Value,
 } from "./lib/types.js";
+import type FDBIndex from "./FDBIndex.js";
 import type FDBRequest from "./FDBRequest.js";
 
 const getEffectiveObjectStore = (cursor: FDBCursor) => {
@@ -69,6 +71,89 @@ const makeKeyRange = (
     if (upper !== undefined) {
         return FDBKeyRange.upperBound(upper);
     }
+};
+
+const getSourceRecords = (
+    cursor: FDBCursor,
+    range: FDBKeyRange | undefined,
+    direction: "next" | "prev" = "next",
+): Record[] => {
+    const sourceIsObjectStore = cursor.source instanceof FDBObjectStore;
+
+    if (sourceIsObjectStore) {
+        const objectStore = (cursor.source as FDBObjectStore)._rawObjectStore;
+        const sqliteBackend = objectStore.rawDatabase.sqliteReadBackend;
+        if (
+            sqliteBackend &&
+            (cursor.source as FDBObjectStore).transaction.mode === "readonly"
+        ) {
+            const resolvedRange =
+                range ?? new FDBKeyRange(undefined, undefined, false, false);
+            return sqliteBackend.getObjectStoreRecords(
+                objectStore.rawDatabase.name,
+                objectStore.name,
+                resolvedRange,
+                direction,
+            );
+        }
+
+        return Array.from(objectStore.records.values(range, direction));
+    }
+
+    const index = (cursor.source as FDBIndex)._rawIndex;
+    const sqliteBackend = index.rawObjectStore.rawDatabase.sqliteReadBackend;
+    if (
+        sqliteBackend &&
+        (cursor.source as FDBIndex).objectStore.transaction.mode === "readonly"
+    ) {
+        const resolvedRange =
+            range ?? new FDBKeyRange(undefined, undefined, false, false);
+        return sqliteBackend.getIndexRecords(
+            index.rawObjectStore.rawDatabase.name,
+            index.rawObjectStore.name,
+            index.name,
+            resolvedRange,
+            direction,
+        );
+    }
+
+    return Array.from(index.records.values(range, direction));
+};
+
+const getRecordByKey = (cursor: FDBCursor, key: Key): Record | undefined => {
+    const sourceIsObjectStore = cursor.source instanceof FDBObjectStore;
+
+    if (sourceIsObjectStore) {
+        const objectStore = (cursor.source as FDBObjectStore)._rawObjectStore;
+        const sqliteBackend = objectStore.rawDatabase.sqliteReadBackend;
+        if (
+            sqliteBackend &&
+            (cursor.source as FDBObjectStore).transaction.mode === "readonly"
+        ) {
+            return sqliteBackend.getObjectStoreRecord(
+                objectStore.rawDatabase.name,
+                objectStore.name,
+                key,
+            );
+        }
+        return objectStore.records.get(key);
+    }
+
+    const index = (cursor.source as FDBIndex)._rawIndex;
+    const sqliteBackend = index.rawObjectStore.rawDatabase.sqliteReadBackend;
+    if (
+        sqliteBackend &&
+        (cursor.source as FDBIndex).objectStore.transaction.mode === "readonly"
+    ) {
+        return sqliteBackend.getIndexRecord(
+            index.rawObjectStore.rawDatabase.name,
+            index.rawObjectStore.name,
+            index.name,
+            key,
+        );
+    }
+
+    return index.records.get(key);
 };
 
 // http://www.w3.org/TR/2015/REC-IndexedDB-20150108/#cursor
@@ -140,16 +225,15 @@ class FDBCursor {
     public _iterate(key?: Key, primaryKey?: Key): this | null {
         const sourceIsObjectStore = this.source instanceof FDBObjectStore;
 
-        // Can't use sourceIsObjectStore because TypeScript
-        const records =
-            this.source instanceof FDBObjectStore
-                ? this.source._rawObjectStore.records
-                : this.source._rawIndex.records;
+        const recordsNext = (range: FDBKeyRange | undefined) =>
+            getSourceRecords(this, range, "next");
+        const recordsPrev = (range: FDBKeyRange | undefined) =>
+            getSourceRecords(this, range, "prev");
 
         let foundRecord;
         if (this.direction === "next") {
             const range = makeKeyRange(this._range, [key, this._position], []);
-            for (const record of records.values(range)) {
+            for (const record of recordsNext(range)) {
                 const cmpResultKey =
                     key !== undefined ? cmpKeys(record.key, key) : undefined;
                 const cmpResultPosition =
@@ -202,7 +286,7 @@ class FDBCursor {
             // But the performance difference should be small, and that wouldn't work anyway for directions where the
             // value needs to be used (like next and prev).
             const range = makeKeyRange(this._range, [key, this._position], []);
-            for (const record of records.values(range)) {
+            for (const record of recordsNext(range)) {
                 if (key !== undefined) {
                     if (cmpKeys(record.key, key) === -1) {
                         continue;
@@ -223,7 +307,7 @@ class FDBCursor {
             }
         } else if (this.direction === "prev") {
             const range = makeKeyRange(this._range, [], [key, this._position]);
-            for (const record of records.values(range, "prev")) {
+            for (const record of recordsPrev(range)) {
                 const cmpResultKey =
                     key !== undefined ? cmpKeys(record.key, key) : undefined;
                 const cmpResultPosition =
@@ -274,7 +358,7 @@ class FDBCursor {
         } else if (this.direction === "prevunique") {
             let tempRecord;
             const range = makeKeyRange(this._range, [], [key, this._position]);
-            for (const record of records.values(range, "prev")) {
+            for (const record of recordsPrev(range)) {
                 if (key !== undefined) {
                     if (cmpKeys(record.key, key) === 1) {
                         continue;
@@ -295,7 +379,7 @@ class FDBCursor {
             }
 
             if (tempRecord) {
-                foundRecord = records.get(tempRecord.key);
+                foundRecord = getRecordByKey(this, tempRecord.key);
             }
         }
 
@@ -342,6 +426,8 @@ class FDBCursor {
                     const value =
                         this.source.objectStore._rawObjectStore.getValue(
                             foundRecord.value,
+                            this.source.objectStore.transaction.mode ===
+                                "readonly",
                         );
                     (this as any).value = structuredClone(value);
                 }

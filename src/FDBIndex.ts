@@ -189,7 +189,11 @@ class FDBIndex {
         }
 
         return this.objectStore.transaction._execRequestAsync({
-            operation: this._rawIndex.getValue.bind(this._rawIndex, key),
+            operation: this._rawIndex.getValue.bind(
+                this._rawIndex,
+                key,
+                this.objectStore.transaction.mode === "readonly",
+            ),
             source: this,
         });
     }
@@ -215,6 +219,7 @@ class FDBIndex {
                 range,
                 options.count,
                 options.direction,
+                this.objectStore.transaction.mode === "readonly",
             ),
             source: this,
         });
@@ -229,7 +234,11 @@ class FDBIndex {
         }
 
         return this.objectStore.transaction._execRequestAsync({
-            operation: this._rawIndex.getKey.bind(this._rawIndex, key),
+            operation: this._rawIndex.getKey.bind(
+                this._rawIndex,
+                key,
+                this.objectStore.transaction.mode === "readonly",
+            ),
             source: this,
         });
     }
@@ -255,6 +264,7 @@ class FDBIndex {
                 range,
                 options.count,
                 options.direction,
+                this.objectStore.transaction.mode === "readonly",
             ),
             source: this,
         });
@@ -288,6 +298,7 @@ class FDBIndex {
                 range,
                 count,
                 direction,
+                this.objectStore.transaction.mode === "readonly",
             ),
             source: this,
         });
@@ -306,7 +317,10 @@ class FDBIndex {
 
         return this.objectStore.transaction._execRequestAsync({
             operation: () => {
-                return this._rawIndex.count(key);
+                return this._rawIndex.count(
+                    key,
+                    this.objectStore.transaction.mode === "readonly",
+                );
             },
             source: this,
         });

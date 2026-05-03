@@ -6,7 +6,7 @@
 [![npm](https://img.shields.io/npm/v/fake-indexeddb)](https://www.npmjs.com/package/fake-indexeddb)
 [![npm](https://img.shields.io/npm/dm/fake-indexeddb)](https://www.npmjs.com/package/fake-indexeddb)
 
-A pure JS in-memory implementation of [the IndexedDB API](https://w3c.github.io/IndexedDB/). Its main use is testing IndexedDB-dependent code in Node.js.
+A JS implementation of [the IndexedDB API](https://w3c.github.io/IndexedDB/) for Node.js. It supports both an in-memory backend and a SQLite-backed persistent backend.
 
 ## Installation
 
@@ -16,7 +16,7 @@ npm install --save-dev fake-indexeddb
 
 ## Use
 
-Functionally, it works exactly like IndexedDB except data is not persisted to disk.
+By default, it works like IndexedDB with in-memory storage (not persisted to disk).
 
 The easiest way to use it is to import `fake-indexeddb/auto`, which will put all the IndexedDB variables in the global scope. (Both `import` and `require` are supported, use whichever you like, but the examples here are all `import`.)
 
@@ -165,6 +165,23 @@ module.exports = config;
 ```
 
 Hopefully a future version of jsdom will no longer require these workarounds.
+
+### SQLite persistence backend (Node.js)
+
+Use the SQLite backend when you want data to persist across process restarts.
+
+```js
+import { IDBFactory } from "fake-indexeddb";
+import { SQLiteFactoryStorageBackend } from "fake-indexeddb/sqlite";
+
+const indexedDB = new IDBFactory({
+    storage: new SQLiteFactoryStorageBackend("./indexeddb.sqlite"),
+});
+```
+
+Notes:
+- `fake-indexeddb/sqlite` is Node-only.
+- Cross-process coordination semantics (like blocked/versionchange across separate processes) are not yet implemented.
 
 ### Wiping/resetting the indexedDB for a fresh state
 

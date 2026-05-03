@@ -8,7 +8,12 @@ import { AbortError, VersionError } from "./lib/errors.js";
 import FakeEvent from "./lib/FakeEvent.js";
 import { queueTask } from "./lib/scheduling.js";
 import { validateRequiredArguments } from "./lib/validateRequiredArguments.js";
+import MemoryFactoryStorageBackend from "./storage/MemoryFactoryStorageBackend.js";
 import type { FDBDatabaseInfo } from "./lib/types.js";
+import type {
+    FDBFactoryOptions,
+    FactoryStorageBackend,
+} from "./storage/types.js";
 
 // https://w3c.github.io/IndexedDB/#connection-queue
 const runTaskInConnectionQueue = (
@@ -25,7 +30,7 @@ const runTaskInConnectionQueue = (
 };
 
 const waitForOthersClosedDelete = (
-    databases: Map<string, Database>,
+    storage: FactoryStorageBackend,
     name: string,
     openDatabases: FDBDatabase[],
     cb: (err: Error | null) => void,
@@ -36,19 +41,19 @@ const waitForOthersClosedDelete = (
 
     if (anyOpen) {
         queueTask(() =>
-            waitForOthersClosedDelete(databases, name, openDatabases, cb),
+            waitForOthersClosedDelete(storage, name, openDatabases, cb),
         );
         return;
     }
 
-    databases.delete(name);
+    storage.deleteDatabase(name);
 
     cb(null);
 };
 
 // https://w3c.github.io/IndexedDB/#delete-a-database
 const deleteDatabase = (
-    databases: Map<string, Database>,
+    storage: FactoryStorageBackend,
     connectionQueues: Map<string, Promise<void>>,
     name: string,
     request: FDBOpenDBRequest,
@@ -56,7 +61,7 @@ const deleteDatabase = (
 ) => {
     const deleteDBTask = () => {
         return new Promise<void>((resolve) => {
-            const db = databases.get(name);
+            const db = storage.getDatabase(name);
             const oldVersion = db !== undefined ? db.version : 0;
 
             const onComplete = (err: Error | null) => {
@@ -72,7 +77,7 @@ const deleteDatabase = (
             };
 
             try {
-                const db = databases.get(name);
+                const db = storage.getDatabase(name);
                 if (db === undefined) {
                     onComplete(null);
                     return;
@@ -126,7 +131,7 @@ const deleteDatabase = (
 
                     // Wait until all connections in openConnections are closed.
                     waitForOthersClosedDelete(
-                        databases,
+                        storage,
                         name,
                         openConnections,
                         onComplete,
@@ -302,7 +307,7 @@ const runVersionchangeTransaction = (
 
 // https://w3c.github.io/IndexedDB/#opening
 const openDatabase = (
-    databases: Map<string, Database>,
+    storage: FactoryStorageBackend,
     connectionQueues: Map<string, Promise<void>>,
     name: string,
     version: number | undefined,
@@ -326,12 +331,32 @@ const openDatabase = (
             };
 
             // Let db be the database named name in storageKey, or null otherwise.
-            let db = databases.get(name);
+            let db = storage.getDatabase(name);
             if (db === undefined) {
                 // If db is null, let db be a new database with name `name`, version 0 (zero), and with no object stores.
                 db = new Database(name, 0);
-                databases.set(name, db);
+                storage.setDatabase(db);
             }
+
+            if (storage.canStartWriteTransaction) {
+                db.canStartWriteTransaction = () => {
+                    return storage.canStartWriteTransaction!(db);
+                };
+                db.onWriteTransactionFinish = () => {
+                    for (const [, database] of storage.entries()) {
+                        database.processTransactions();
+                    }
+                };
+            }
+            db.onWriteTransactionStart = () => {
+                storage.onWriteTransactionStart?.(db);
+            };
+            db.onWriteTransactionCommit = () => {
+                storage.onWriteTransactionCommit?.(db);
+            };
+            db.onWriteTransactionAbort = () => {
+                storage.onWriteTransactionAbort?.(db);
+            };
 
             // If version is undefined, let version be 1 if db is null, or db’s version otherwise.
             if (version === undefined) {
@@ -367,9 +392,13 @@ const openDatabase = (
 };
 
 class FDBFactory {
-    private _databases: Map<string, Database> = new Map();
+    private _storage: FactoryStorageBackend;
     // https://w3c.github.io/IndexedDB/#connection-queue
     private _connectionQueues = new Map<string, Promise<void>>(); // promise chain as lightweight FIFO task queue
+
+    constructor(options: FDBFactoryOptions = {}) {
+        this._storage = options.storage ?? new MemoryFactoryStorageBackend();
+    }
 
     // https://w3c.github.io/IndexedDB/#dom-idbfactory-cmp
     public cmp(first: any, second: any) {
@@ -391,7 +420,7 @@ class FDBFactory {
 
         queueTask(() => {
             deleteDatabase(
-                this._databases,
+                this._storage,
                 this._connectionQueues,
                 name,
                 request,
@@ -443,7 +472,7 @@ class FDBFactory {
 
         queueTask(() => {
             openDatabase(
-                this._databases,
+                this._storage,
                 this._connectionQueues,
                 name,
                 version,
@@ -481,7 +510,7 @@ class FDBFactory {
     // https://w3c.github.io/IndexedDB/#dom-idbfactory-databases
     public databases(): Promise<FDBDatabaseInfo[]> {
         return Promise.resolve(
-            Array.from(this._databases.entries(), ([name, database]) => {
+            Array.from(this._storage.entries(), ([name, database]) => {
                 const activeVersionChangeConnection = database.connections.find(
                     (connection) => connection._runningVersionchangeTransaction,
                 );

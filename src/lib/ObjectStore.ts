@@ -35,7 +35,18 @@ class ObjectStore {
     }
 
     // http://www.w3.org/TR/2015/REC-IndexedDB-20150108/#dfn-steps-for-retrieving-a-value-from-an-object-store
-    public getKey(key: FDBKeyRange | Key) {
+    public getKey(key: FDBKeyRange | Key, useSQLiteReadBackend = true) {
+        const sqliteRecord = useSQLiteReadBackend
+            ? this.rawDatabase.sqliteReadBackend?.getObjectStoreRecord(
+                  this.rawDatabase.name,
+                  this.name,
+                  key,
+              )
+            : undefined;
+        if (sqliteRecord !== undefined) {
+            return structuredClone(sqliteRecord.key);
+        }
+
         const record = this.records.get(key);
 
         return record !== undefined ? structuredClone(record.key) : undefined;
@@ -46,13 +57,24 @@ class ObjectStore {
         range: FDBKeyRange,
         count?: number,
         direction?: "next" | "prev",
+        useSQLiteReadBackend = true,
     ) {
         if (count === undefined || count === 0) {
             count = Infinity;
         }
 
+        const sqliteRecords = useSQLiteReadBackend
+            ? this.rawDatabase.sqliteReadBackend?.getObjectStoreRecords(
+                  this.rawDatabase.name,
+                  this.name,
+                  range,
+                  direction,
+              )
+            : undefined;
+
         const records = [];
-        for (const record of this.records.values(range, direction)) {
+        const source = sqliteRecords ?? this.records.values(range, direction);
+        for (const record of source) {
             records.push(structuredClone(record.key));
             if (records.length >= count) {
                 break;
@@ -63,7 +85,18 @@ class ObjectStore {
     }
 
     // http://www.w3.org/TR/2015/REC-IndexedDB-20150108/#dfn-steps-for-retrieving-a-value-from-an-object-store
-    public getValue(key: FDBKeyRange | Key) {
+    public getValue(key: FDBKeyRange | Key, useSQLiteReadBackend = true) {
+        const sqliteRecord = useSQLiteReadBackend
+            ? this.rawDatabase.sqliteReadBackend?.getObjectStoreRecord(
+                  this.rawDatabase.name,
+                  this.name,
+                  key,
+              )
+            : undefined;
+        if (sqliteRecord !== undefined) {
+            return structuredClone(sqliteRecord.value);
+        }
+
         const record = this.records.get(key);
 
         return record !== undefined ? structuredClone(record.value) : undefined;
@@ -74,13 +107,24 @@ class ObjectStore {
         range: FDBKeyRange,
         count?: number,
         direction?: "next" | "prev",
+        useSQLiteReadBackend = true,
     ) {
         if (count === undefined || count === 0) {
             count = Infinity;
         }
 
+        const sqliteRecords = useSQLiteReadBackend
+            ? this.rawDatabase.sqliteReadBackend?.getObjectStoreRecords(
+                  this.rawDatabase.name,
+                  this.name,
+                  range,
+                  direction,
+              )
+            : undefined;
+
         const records = [];
-        for (const record of this.records.values(range, direction)) {
+        const source = sqliteRecords ?? this.records.values(range, direction);
+        for (const record of source) {
             records.push(structuredClone(record.value));
             if (records.length >= count) {
                 break;
@@ -95,13 +139,24 @@ class ObjectStore {
         range: FDBKeyRange,
         count?: number,
         direction?: "next" | "prev",
+        useSQLiteReadBackend = true,
     ) {
         if (count === undefined || count === 0) {
             count = Infinity;
         }
 
+        const sqliteRecords = useSQLiteReadBackend
+            ? this.rawDatabase.sqliteReadBackend?.getObjectStoreRecords(
+                  this.rawDatabase.name,
+                  this.name,
+                  range,
+                  direction,
+              )
+            : undefined;
+
         const records = [];
-        for (const record of this.records.values(range, direction)) {
+        const source = sqliteRecords ?? this.records.values(range, direction);
+        for (const record of source) {
             records.push(
                 new FDBRecord(
                     structuredClone(record.key),
@@ -291,7 +346,19 @@ class ObjectStore {
         }
     }
 
-    public count(range: FDBKeyRange | undefined) {
+    public count(range: FDBKeyRange | undefined, useSQLiteReadBackend = true) {
+        if (
+            useSQLiteReadBackend &&
+            this.rawDatabase.sqliteReadBackend &&
+            range !== undefined
+        ) {
+            return this.rawDatabase.sqliteReadBackend.getObjectStoreRecords(
+                this.rawDatabase.name,
+                this.name,
+                range,
+            ).length;
+        }
+
         // optimization: if there is no range, or if the range is everything, then we can just count the total size
         if (
             range === undefined ||

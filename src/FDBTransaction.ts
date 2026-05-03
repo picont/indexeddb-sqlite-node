@@ -54,6 +54,7 @@ class FDBTransaction extends FakeEventTarget {
 
     public _createdIndexes = new Set<Index>();
     public _createdObjectStores = new Set<ObjectStore>();
+    private _storageWriteTransactionStarted = false;
 
     constructor(
         storeNames: string[],
@@ -128,6 +129,15 @@ class FDBTransaction extends FakeEventTarget {
 
         // Queue a database task to run these steps:
         queueTask(() => {
+            if (
+                this._storageWriteTransactionStarted &&
+                this.mode !== "readonly"
+            ) {
+                this.db._rawDatabase.onWriteTransactionAbort?.();
+                this.db._rawDatabase.onWriteTransactionFinish?.();
+                this._storageWriteTransactionStarted = false;
+            }
+
             // If transaction is an upgrade transaction, then set transaction’s connection’s associated database’s
             // upgrade transaction to null.
             // (i.e. remove it from the list of `db.connections`)
@@ -227,6 +237,11 @@ class FDBTransaction extends FakeEventTarget {
     public _start() {
         this._started = true;
 
+        if (!this._storageWriteTransactionStarted && this.mode !== "readonly") {
+            this.db._rawDatabase.onWriteTransactionStart?.();
+            this._storageWriteTransactionStarted = true;
+        }
+
         // Remove from request queue - cursor ones will be added back if necessary by cursor.continue and such
         let operation;
         let request;
@@ -309,6 +324,11 @@ class FDBTransaction extends FakeEventTarget {
             this._state = "finished";
 
             if (!this.error) {
+                if (this.mode !== "readonly") {
+                    this.db._rawDatabase.onWriteTransactionCommit?.();
+                    this.db._rawDatabase.onWriteTransactionFinish?.();
+                    this._storageWriteTransactionStarted = false;
+                }
                 const event = new FakeEvent("complete");
                 this.dispatchEvent(event);
             }
