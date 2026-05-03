@@ -3,12 +3,17 @@ import { intersection } from "./intersection.js";
 import type FDBDatabase from "../FDBDatabase.js";
 import type FDBTransaction from "../FDBTransaction.js";
 import type ObjectStore from "./ObjectStore.js";
+import type { SQLiteReadBackend } from "../storage/types.js";
 
 // http://www.w3.org/TR/2015/REC-IndexedDB-20150108/#dfn-database
 class Database {
     public readonly transactions: FDBTransaction[] = [];
     public readonly rawObjectStores: Map<string, ObjectStore> = new Map();
     public connections: FDBDatabase[] = [];
+    public onWriteTransactionStart: (() => void) | undefined;
+    public onWriteTransactionCommit: (() => void) | undefined;
+    public onWriteTransactionAbort: (() => void) | undefined;
+    public sqliteReadBackend: SQLiteReadBackend | undefined;
 
     public readonly name: string;
     public version: number;

@@ -14,3 +14,7 @@ export { default as IDBRequest } from "./FDBRequest.js";
 export { default as IDBTransaction } from "./FDBTransaction.js";
 export { default as IDBVersionChangeEvent } from "./FDBVersionChangeEvent.js";
 export { default as forceCloseDatabase } from "./forceCloseDatabase.js";
+export type {
+    FDBFactoryOptions,
+    FactoryStorageBackend,
+} from "./storage/types.js";
