@@ -1349,4 +1349,95 @@ describe("fakeIndexedDB Tests", () => {
             fs.rmSync(sqlitePath, { force: true });
         }
     });
+
+    it("SQLite readwrite transactions read their own overwrites", async () => {
+        const factory = new FDBFactory({
+            storage: new SQLiteFactoryStorageBackend(),
+        });
+        const dbName = `sqlite-read-own-writes-${Math.random()}`;
+
+        const db = await new Promise<FDBDatabase>((resolve, reject) => {
+            const open = factory.open(dbName, 1);
+            open.onupgradeneeded = () => {
+                open.result.createObjectStore("items");
+            };
+            open.onsuccess = () => resolve(open.result);
+            open.onerror = () => reject(open.error);
+        });
+
+        await new Promise<void>((resolve, reject) => {
+            const tx = db.transaction("items", "readwrite");
+            tx.objectStore("items").put("old", "key");
+            tx.oncomplete = () => resolve();
+            tx.onabort = () => reject(tx.error);
+        });
+
+        await new Promise<void>((resolve, reject) => {
+            const tx = db.transaction("items", "readwrite");
+            const store = tx.objectStore("items");
+            store.put("new", "key");
+            const req = store.get("key");
+            req.onsuccess = () => {
+                assert.strictEqual(req.result, "new");
+            };
+            tx.oncomplete = () => resolve();
+            tx.onabort = () => reject(tx.error);
+        });
+
+        await new Promise<void>((resolve, reject) => {
+            const req = db.transaction("items").objectStore("items").get("key");
+            req.onsuccess = () => {
+                assert.strictEqual(req.result, "new");
+                resolve();
+            };
+            req.onerror = () => reject(req.error);
+        });
+    });
+
+    it("serializes SQLite write transactions across database names", async () => {
+        const factory = new FDBFactory({
+            storage: new SQLiteFactoryStorageBackend(),
+        });
+
+        const openDb = (name: string) =>
+            new Promise<FDBDatabase>((resolve, reject) => {
+                const open = factory.open(name, 1);
+                open.onupgradeneeded = () => {
+                    open.result.createObjectStore("items");
+                };
+                open.onsuccess = () => resolve(open.result);
+                open.onerror = () => reject(open.error);
+            });
+
+        const dbA = await openDb(`sqlite-serialize-a-${Math.random()}`);
+        const dbB = await openDb(`sqlite-serialize-b-${Math.random()}`);
+        const events: string[] = [];
+
+        await new Promise<void>((resolve, reject) => {
+            const txA = dbA.transaction("items", "readwrite");
+            const storeA = txA.objectStore("items");
+            storeA.put("a1", "k1").onsuccess = () => {
+                events.push("a-started");
+                const txB = dbB.transaction("items", "readwrite");
+                txB.objectStore("items").put("b", "k").onsuccess = () => {
+                    events.push("b-started");
+                };
+                txB.oncomplete = () => {
+                    events.push("b-complete");
+                    resolve();
+                };
+                txB.onabort = () => reject(txB.error);
+            };
+            storeA.put("a2", "k2");
+            txA.oncomplete = () => events.push("a-complete");
+            txA.onabort = () => reject(txA.error);
+        });
+
+        assert.deepStrictEqual(events, [
+            "a-started",
+            "a-complete",
+            "b-started",
+            "b-complete",
+        ]);
+    });
 });

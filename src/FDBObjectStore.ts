@@ -276,6 +276,7 @@ class FDBObjectStore {
             operation: this._rawObjectStore.getValue.bind(
                 this._rawObjectStore,
                 key,
+                this.transaction.mode === "readonly",
             ),
             source: this,
         });
@@ -302,6 +303,7 @@ class FDBObjectStore {
                 range,
                 options.count,
                 options.direction,
+                this.transaction.mode === "readonly",
             ),
             source: this,
         });
@@ -322,6 +324,7 @@ class FDBObjectStore {
             operation: this._rawObjectStore.getKey.bind(
                 this._rawObjectStore,
                 key,
+                this.transaction.mode === "readonly",
             ),
             source: this,
         });
@@ -348,6 +351,7 @@ class FDBObjectStore {
                 range,
                 options.count,
                 options.direction,
+                this.transaction.mode === "readonly",
             ),
             source: this,
         });
@@ -383,6 +387,7 @@ class FDBObjectStore {
                 range,
                 count,
                 direction,
+                this.transaction.mode === "readonly",
             ),
             source: this,
         });
@@ -611,7 +616,10 @@ class FDBObjectStore {
 
         return this.transaction._execRequestAsync({
             operation: () => {
-                return this._rawObjectStore.count(key);
+                return this._rawObjectStore.count(
+                    key,
+                    this.transaction.mode === "readonly",
+                );
             },
             source: this,
         });

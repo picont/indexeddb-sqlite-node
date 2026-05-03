@@ -10,9 +10,11 @@ class Database {
     public readonly transactions: FDBTransaction[] = [];
     public readonly rawObjectStores: Map<string, ObjectStore> = new Map();
     public connections: FDBDatabase[] = [];
+    public canStartWriteTransaction: (() => boolean) | undefined;
     public onWriteTransactionStart: (() => void) | undefined;
     public onWriteTransactionCommit: (() => void) | undefined;
     public onWriteTransactionAbort: (() => void) | undefined;
+    public onWriteTransactionFinish: (() => void) | undefined;
     public sqliteReadBackend: SQLiteReadBackend | undefined;
 
     public readonly name: string;
@@ -42,6 +44,13 @@ class Database {
             // The exception is readonly transactions, which are allowed to run in parallel with other readonly
             // transactions, even with overlapping scopes, since no data is being modified.
             const next = waiting.find((transaction, i) => {
+                if (
+                    transaction.mode !== "readonly" &&
+                    this.canStartWriteTransaction?.() === false
+                ) {
+                    return false;
+                }
+
                 const anyRunning = running.some(
                     (other) =>
                         !(

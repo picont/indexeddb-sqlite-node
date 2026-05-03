@@ -35,6 +35,7 @@ export interface FactoryStorageBackend {
     deleteDatabase(name: string): void;
     entries(): IterableIterator<[string, Database]>;
 
+    canStartWriteTransaction?(database: Database): boolean;
     onWriteTransactionStart?(database: Database): void;
     onWriteTransactionCommit?(database: Database): void;
     onWriteTransactionAbort?(database: Database): void;
