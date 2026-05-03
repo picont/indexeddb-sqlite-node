@@ -134,6 +134,7 @@ class FDBTransaction extends FakeEventTarget {
                 this.mode !== "readonly"
             ) {
                 this.db._rawDatabase.onWriteTransactionAbort?.();
+                this.db._rawDatabase.onWriteTransactionFinish?.();
                 this._storageWriteTransactionStarted = false;
             }
 
@@ -325,6 +326,7 @@ class FDBTransaction extends FakeEventTarget {
             if (!this.error) {
                 if (this.mode !== "readonly") {
                     this.db._rawDatabase.onWriteTransactionCommit?.();
+                    this.db._rawDatabase.onWriteTransactionFinish?.();
                     this._storageWriteTransactionStarted = false;
                 }
                 const event = new FakeEvent("complete");

@@ -15,7 +15,7 @@ const decode = <T>(value: Uint8Array): T => deserialize(value);
 class SQLiteFactoryStorageBackend implements FactoryStorageBackend {
     private readonly sqlite: DatabaseSync;
     private readonly databases = new Map<string, Database>();
-    private readonly activeWriteTransactions = new Set<string>();
+    private activeWriteTransactionDatabaseName: string | undefined;
 
     constructor(filename: string = ":memory:") {
         this.sqlite = new DatabaseSync(filename);
@@ -297,16 +297,20 @@ class SQLiteFactoryStorageBackend implements FactoryStorageBackend {
         return sorted;
     }
 
+    public canStartWriteTransaction(): boolean {
+        return this.activeWriteTransactionDatabaseName === undefined;
+    }
+
     public onWriteTransactionStart(database: Database): void {
-        if (this.activeWriteTransactions.has(database.name)) {
-            return;
+        if (this.activeWriteTransactionDatabaseName !== undefined) {
+            throw new Error("SQLite write transaction already active");
         }
         this.sqlite.exec("BEGIN IMMEDIATE");
-        this.activeWriteTransactions.add(database.name);
+        this.activeWriteTransactionDatabaseName = database.name;
     }
 
     public onWriteTransactionCommit(database: Database): void {
-        if (!this.activeWriteTransactions.has(database.name)) {
+        if (this.activeWriteTransactionDatabaseName !== database.name) {
             return;
         }
 
@@ -391,20 +395,20 @@ class SQLiteFactoryStorageBackend implements FactoryStorageBackend {
             }
 
             this.sqlite.exec("COMMIT");
-            this.activeWriteTransactions.delete(database.name);
+            this.activeWriteTransactionDatabaseName = undefined;
         } catch (error) {
             this.sqlite.exec("ROLLBACK");
-            this.activeWriteTransactions.delete(database.name);
+            this.activeWriteTransactionDatabaseName = undefined;
             throw error;
         }
     }
 
     public onWriteTransactionAbort(database: Database): void {
-        if (!this.activeWriteTransactions.has(database.name)) {
+        if (this.activeWriteTransactionDatabaseName !== database.name) {
             return;
         }
         this.sqlite.exec("ROLLBACK");
-        this.activeWriteTransactions.delete(database.name);
+        this.activeWriteTransactionDatabaseName = undefined;
     }
 }
 

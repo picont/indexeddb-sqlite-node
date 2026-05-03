@@ -83,7 +83,10 @@ const getSourceRecords = (
     if (sourceIsObjectStore) {
         const objectStore = (cursor.source as FDBObjectStore)._rawObjectStore;
         const sqliteBackend = objectStore.rawDatabase.sqliteReadBackend;
-        if (sqliteBackend) {
+        if (
+            sqliteBackend &&
+            (cursor.source as FDBObjectStore).transaction.mode === "readonly"
+        ) {
             const resolvedRange =
                 range ?? new FDBKeyRange(undefined, undefined, false, false);
             return sqliteBackend.getObjectStoreRecords(
@@ -99,7 +102,10 @@ const getSourceRecords = (
 
     const index = (cursor.source as FDBIndex)._rawIndex;
     const sqliteBackend = index.rawObjectStore.rawDatabase.sqliteReadBackend;
-    if (sqliteBackend) {
+    if (
+        sqliteBackend &&
+        (cursor.source as FDBIndex).objectStore.transaction.mode === "readonly"
+    ) {
         const resolvedRange =
             range ?? new FDBKeyRange(undefined, undefined, false, false);
         return sqliteBackend.getIndexRecords(
@@ -120,7 +126,10 @@ const getRecordByKey = (cursor: FDBCursor, key: Key): Record | undefined => {
     if (sourceIsObjectStore) {
         const objectStore = (cursor.source as FDBObjectStore)._rawObjectStore;
         const sqliteBackend = objectStore.rawDatabase.sqliteReadBackend;
-        if (sqliteBackend) {
+        if (
+            sqliteBackend &&
+            (cursor.source as FDBObjectStore).transaction.mode === "readonly"
+        ) {
             return sqliteBackend.getObjectStoreRecord(
                 objectStore.rawDatabase.name,
                 objectStore.name,
@@ -132,7 +141,10 @@ const getRecordByKey = (cursor: FDBCursor, key: Key): Record | undefined => {
 
     const index = (cursor.source as FDBIndex)._rawIndex;
     const sqliteBackend = index.rawObjectStore.rawDatabase.sqliteReadBackend;
-    if (sqliteBackend) {
+    if (
+        sqliteBackend &&
+        (cursor.source as FDBIndex).objectStore.transaction.mode === "readonly"
+    ) {
         return sqliteBackend.getIndexRecord(
             index.rawObjectStore.rawDatabase.name,
             index.rawObjectStore.name,
@@ -414,6 +426,8 @@ class FDBCursor {
                     const value =
                         this.source.objectStore._rawObjectStore.getValue(
                             foundRecord.value,
+                            this.source.objectStore.transaction.mode ===
+                                "readonly",
                         );
                     (this as any).value = structuredClone(value);
                 }

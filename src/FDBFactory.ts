@@ -338,6 +338,16 @@ const openDatabase = (
                 storage.setDatabase(db);
             }
 
+            if (storage.canStartWriteTransaction) {
+                db.canStartWriteTransaction = () => {
+                    return storage.canStartWriteTransaction!(db);
+                };
+                db.onWriteTransactionFinish = () => {
+                    for (const [, database] of storage.entries()) {
+                        database.processTransactions();
+                    }
+                };
+            }
             db.onWriteTransactionStart = () => {
                 storage.onWriteTransactionStart?.(db);
             };
