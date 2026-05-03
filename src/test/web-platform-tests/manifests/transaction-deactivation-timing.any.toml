@@ -1,0 +1,10 @@
+expectTimeout = true
+
+["Deactivation of new transactions happens at end of invocation"]
+expectation = "FAIL"
+
+["New transactions are deactivated before next task"]
+expectation = "FAIL"
+
+["New transactions from microtask are deactivated before next task"]
+expectation = "FAIL"

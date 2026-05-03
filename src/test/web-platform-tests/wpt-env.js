@@ -1,0 +1,1200 @@
+import assert from "node:assert";
+import "../../../auto/index.mjs";
+import FakeEvent from "../../../build/esm/lib/FakeEvent.js";
+import {
+    AbortError,
+    ConstraintError,
+    DataCloneError,
+    DataError,
+    InvalidAccessError,
+    InvalidStateError,
+    NotFoundError,
+    ReadOnlyError,
+    TransactionInactiveError,
+    VersionError,
+} from "../../../build/esm/lib/errors.js";
+
+global.AbortError = AbortError;
+global.ConstraintError = ConstraintError;
+global.DataCloneError = DataCloneError;
+global.DataError = DataError;
+global.InvalidAccessError = InvalidAccessError;
+global.InvalidStateError = InvalidStateError;
+global.NotFoundError = NotFoundError;
+global.ReadOnlyError = ReadOnlyError;
+global.TransactionInactiveError = TransactionInactiveError;
+global.VersionError = VersionError;
+
+global.Event = FakeEvent;
+
+// idlharness.js sniffs for this to detect this as a "window" realm
+global.Window = function Window() {};
+
+global.FileReader = class FileReader {
+    async readAsArrayBuffer(blob) {
+        this.result = await blob.arrayBuffer();
+        this.onloadend();
+    }
+};
+
+global.File = class File extends Blob {
+    constructor(bits, name, options = {}) {
+        super(bits);
+        this._bits = bits;
+        this.name = name;
+        this.lastModified = options?.lastModified;
+    }
+};
+
+class GenericCloneable {
+    constructor() {
+        for (const prop of ["a", "b", "c"]) {
+            this[prop] = Math.random();
+        }
+    }
+    __clone() {
+        const clone = Object.create(Object.getPrototypeOf(this));
+        Object.assign(clone, {
+            ...this,
+        });
+        return clone;
+    }
+}
+
+// generic cloneable object polyfills just so the structured clone tests pass
+[
+    "DOMMatrix",
+    "DOMMatrixReadOnly",
+    "DOMPoint",
+    "DOMPointReadOnly",
+    "DOMRect",
+    "DOMRectReadOnly",
+].forEach((Clazz) => {
+    global[Clazz] = class extends GenericCloneable {};
+    Object.defineProperty(global[Clazz], "name", { value: Clazz });
+});
+global.ImageData = class extends GenericCloneable {
+    constructor() {
+        super();
+        this.width = Math.random();
+        this.height = Math.random();
+        this.data = new Array(256).fill(0);
+    }
+};
+
+// currently we cannot define our own structured cloning algorithm for our polyfills, so we implement our own
+// structured clone to pass some tests. If this proposal is ever implemented we can remove this:
+// https://github.com/littledan/serializable-objects
+const originalStructuredClone = global.structuredClone;
+global.structuredClone = function customStructuredClone(obj) {
+    if (obj instanceof File) {
+        return new File(structuredClone(obj._bits), obj.name, {
+            lastModified: obj.lastModified,
+        });
+    } else if (obj instanceof GenericCloneable) {
+        return obj.__clone();
+    } else if (obj instanceof Event || obj instanceof MessageChannel) {
+        // FakeEvent should be non-serializable, same as native Event
+        // TODO [#140]: use native Event/EventTarget
+        // As for MessageChannel, in Node 22+ the error is a proper DataCloneError
+        // but currently we need this for Node 18/20 support
+        throw new DataCloneError("not serializable");
+    }
+    return originalStructuredClone(obj);
+};
+
+global.document = {
+    // Kind of cheating for key_invalid.js: It wants to test using a DOM node as a key, but that can't work in Node, so
+    // this will instead use another object that also can't be used as a key.
+    getElementsByTagName: () => Math,
+    // structured-clone.any.js creates an `<input type=file multiple>`
+    createElement: () => ({ files: [{ name: "foo.txt" }] }),
+};
+global.location = {
+    location: {},
+};
+global.self = global;
+global.window = global;
+
+// This is currently used by the tests just to sniff whether the object is clonable or not
+global.postMessage = (obj) => {
+    structuredClone(obj);
+};
+
+global.addEventListener = () => {
+    // no-op, the `idb-explicit-commit-throw.any.js` test currently
+    // tries to `addEventListener('error')` and `preventDefault` on it
+};
+
+const generatedTestNames = new Map();
+let generatedTestNameCounter = 0;
+function generateTestName(func) {
+    if (!generatedTestNames.has(func)) {
+        generatedTestNames.set(
+            func,
+            `Anonymous test #${++generatedTestNameCounter}`,
+        );
+    }
+    return generatedTestNames.get(func);
+}
+
+function logTestResult(name, result) {
+    if (!name || !("passed" in result)) {
+        // should never happen
+        throw new Error("Invalid format for test result");
+    }
+    console.log(JSON.stringify({ testResult: { [name]: result } }));
+}
+
+const add_completion_callback = () => {};
+
+// Array.from is to help with DOMStringList to Array comparisons
+const assert_array_equals = (a, b, ...args) =>
+    assert.deepEqual(Array.from(a), Array.from(b), ...args);
+
+const assert_object_equals = (...args) => assert.deepEqual(...args);
+
+const assert_unreached = (msg) => assert.fail(msg);
+
+const assert_equals = (...args) => assert.equal(...args);
+
+const assert_class_string = (object, class_string, description) => {
+    var actual = {}.toString.call(object);
+    var expected = "[object " + class_string + "]";
+    assert(
+        same_value(actual, expected),
+        "assert_class_string",
+        description,
+        "expected ${expected} but got ${actual}",
+        { expected: expected, actual: actual },
+    );
+};
+
+const assert_false = (val, message) => assert.ok(!val, message);
+
+const assert_key_equals = (actual, expected, description) => {
+    assert_equals(indexedDB.cmp(actual, expected), 0, description);
+};
+
+const assert_not_equals = (...args) => assert.notEqual(...args);
+
+const assert_readonly = (object, property_name, description) => {
+    var initial_value = object[property_name];
+    try {
+        //Note that this can have side effects in the case where
+        //the property has PutForwards
+        object[property_name] = initial_value + "a"; //XXX use some other value here?
+        assert.equal(object[property_name], initial_value, description);
+    } finally {
+        object[property_name] = initial_value;
+    }
+};
+
+const assert_throws = (errName, block, message) =>
+    assert.throws(block, new RegExp(errName), message);
+
+function AssertionError(message) {
+    this.message = message;
+    this.stack = this.get_stack();
+}
+
+/**
+ * Assert the provided value is thrown.
+ *
+ * @param {value} exception The expected exception.
+ * @param {Function} func Function which should throw.
+ * @param {string} description Error description for the case that the error is not thrown.
+ */
+function assert_throws_exactly(exception, func, description) {
+    assert_throws_exactly_impl(
+        exception,
+        func,
+        description,
+        "assert_throws_exactly",
+    );
+}
+
+function same_value(x, y) {
+    if (y !== y) {
+        //NaN case
+        return x !== x;
+    }
+    if (x === 0 && y === 0) {
+        //Distinguish +0 and -0
+        return 1 / x === 1 / y;
+    }
+    return x === y;
+}
+
+/**
+ * Like assert_throws_exactly but allows specifying the assertion type
+ * (assert_throws_exactly or promise_rejects_exactly, in practice).
+ */
+function assert_throws_exactly_impl(
+    exception,
+    func,
+    description,
+    assertion_type,
+) {
+    try {
+        func.call(this);
+        assert(false, assertion_type, description, "${func} did not throw", {
+            func: func,
+        });
+    } catch (e) {
+        if (e instanceof AssertionError) {
+            throw e;
+        }
+
+        assert(
+            same_value(e, exception),
+            assertion_type,
+            description,
+            "${func} threw ${e} but we expected it to throw ${exception}",
+            { func: func, e: e, exception: exception },
+        );
+    }
+}
+
+/**
+ * Assert a JS Error with the expected constructor is thrown.
+ *
+ * @param {object} constructor The expected exception constructor.
+ * @param {Function} func Function which should throw.
+ * @param {string} description Error description for the case that the error is not thrown.
+ */
+function assert_throws_js(constructor, func, description) {
+    assert_throws_js_impl(constructor, func, description, "assert_throws_js");
+}
+
+/**
+ * Like assert_throws_js but allows specifying the assertion type
+ * (assert_throws_js or promise_rejects_js, in practice).
+ */
+function assert_throws_js_impl(constructor, func, description, assertion_type) {
+    try {
+        func.call(this);
+        assert(false, assertion_type, description, "${func} did not throw", {
+            func: func,
+        });
+    } catch (e) {
+        if (e instanceof AssertionError) {
+            throw e;
+        }
+
+        // Basic sanity-checks on the thrown exception.
+        assert(
+            typeof e === "object",
+            assertion_type,
+            description,
+            "${func} threw ${e} with type ${type}, not an object",
+            { func: func, e: e, type: typeof e },
+        );
+
+        assert(
+            e !== null,
+            assertion_type,
+            description,
+            "${func} threw null, not an object",
+            { func: func },
+        );
+
+        // Basic sanity-check on the passed-in constructor
+        assert(
+            typeof constructor == "function",
+            assertion_type,
+            description,
+            "${constructor} is not a constructor",
+            { constructor: constructor },
+        );
+        var obj = constructor;
+        while (obj) {
+            if (typeof obj === "function" && obj.name === "Error") {
+                break;
+            }
+            obj = Object.getPrototypeOf(obj);
+        }
+        assert(
+            obj != null,
+            assertion_type,
+            description,
+            "${constructor} is not an Error subtype",
+            { constructor: constructor },
+        );
+
+        // And checking that our exception is reasonable
+        assert(
+            e.constructor === constructor && e.name === constructor.name,
+            assertion_type,
+            description,
+            "${func} threw ${actual} (${actual_name}) expected instance of ${expected} (${expected_name})",
+            {
+                func: func,
+                actual: e,
+                actual_name: e.name,
+                expected: constructor,
+                expected_name: constructor.name,
+            },
+        );
+    }
+}
+
+// TODO: Figure out how to document the overloads better.
+// sphinx-js doesn't seem to handle @variation correctly,
+// and only expects a single JSDoc entry per function.
+/**
+ * Assert a DOMException with the expected type is thrown.
+ *
+ * There are two ways of calling assert_throws_dom:
+ *
+ * 1) If the DOMException is expected to come from the current global, the
+ * second argument should be the function expected to throw and a third,
+ * optional, argument is the assertion description.
+ *
+ * 2) If the DOMException is expected to come from some other global, the
+ * second argument should be the DOMException constructor from that global,
+ * the third argument the function expected to throw, and the fourth, optional,
+ * argument the assertion description.
+ *
+ * @param {number|string} type - The expected exception name or
+ * code.  See the `table of names and codes
+ * <https://webidl.spec.whatwg.org/#dfn-error-names-table>`_. If a
+ * number is passed it should be one of the numeric code values in
+ * that table (e.g. 3, 4, etc).  If a string is passed it can
+ * either be an exception name (e.g. "HierarchyRequestError",
+ * "WrongDocumentError") or the name of the corresponding error
+ * code (e.g. "``HIERARCHY_REQUEST_ERR``", "``WRONG_DOCUMENT_ERR``").
+ * @param {Function} descriptionOrFunc - The function expected to
+ * throw (if the exception comes from another global), or the
+ * optional description of the condition being tested (if the
+ * exception comes from the current global).
+ * @param {string} [description] - Description of the condition
+ * being tested (if the exception comes from another global).
+ *
+ */
+function assert_throws_dom(
+    type,
+    funcOrConstructor,
+    descriptionOrFunc,
+    maybeDescription,
+) {
+    let constructor, func, description;
+    if (funcOrConstructor.name === "DOMException") {
+        constructor = funcOrConstructor;
+        func = descriptionOrFunc;
+        description = maybeDescription;
+    } else {
+        constructor = self.DOMException;
+        func = funcOrConstructor;
+        description = descriptionOrFunc;
+        assert(
+            maybeDescription === undefined,
+            "Too many args passed to no-constructor version of assert_throws_dom, or accidentally explicitly passed undefined",
+        );
+    }
+    assert_throws_dom_impl(
+        type,
+        func,
+        description,
+        "assert_throws_dom",
+        constructor,
+    );
+}
+
+/**
+ * Similar to assert_throws_dom but allows specifying the assertion type
+ * (assert_throws_dom or promise_rejects_dom, in practice).  The
+ * "constructor" argument must be the DOMException constructor from the
+ * global we expect the exception to come from.
+ */
+function assert_throws_dom_impl(
+    type,
+    func,
+    description,
+    assertion_type,
+    constructor,
+) {
+    try {
+        func.call(this);
+        assert(false, assertion_type, description, "${func} did not throw", {
+            func: func,
+        });
+    } catch (e) {
+        if (e instanceof AssertionError) {
+            throw e;
+        }
+
+        // Basic sanity-checks on the thrown exception.
+        assert(
+            typeof e === "object",
+            assertion_type,
+            description,
+            "${func} threw ${e} with type ${type}, not an object",
+            { func: func, e: e, type: typeof e },
+        );
+
+        assert(
+            e !== null,
+            assertion_type,
+            description,
+            "${func} threw null, not an object",
+            { func: func },
+        );
+
+        // Sanity-check our type
+        assert(
+            typeof type === "number" || typeof type === "string",
+            assertion_type,
+            description,
+            "${type} is not a number or string",
+            { type: type },
+        );
+
+        var codename_name_map = {
+            INDEX_SIZE_ERR: "IndexSizeError",
+            HIERARCHY_REQUEST_ERR: "HierarchyRequestError",
+            WRONG_DOCUMENT_ERR: "WrongDocumentError",
+            INVALID_CHARACTER_ERR: "InvalidCharacterError",
+            NO_MODIFICATION_ALLOWED_ERR: "NoModificationAllowedError",
+            NOT_FOUND_ERR: "NotFoundError",
+            NOT_SUPPORTED_ERR: "NotSupportedError",
+            INUSE_ATTRIBUTE_ERR: "InUseAttributeError",
+            INVALID_STATE_ERR: "InvalidStateError",
+            SYNTAX_ERR: "SyntaxError",
+            INVALID_MODIFICATION_ERR: "InvalidModificationError",
+            NAMESPACE_ERR: "NamespaceError",
+            INVALID_ACCESS_ERR: "InvalidAccessError",
+            TYPE_MISMATCH_ERR: "TypeMismatchError",
+            SECURITY_ERR: "SecurityError",
+            NETWORK_ERR: "NetworkError",
+            ABORT_ERR: "AbortError",
+            URL_MISMATCH_ERR: "URLMismatchError",
+            TIMEOUT_ERR: "TimeoutError",
+            INVALID_NODE_TYPE_ERR: "InvalidNodeTypeError",
+            DATA_CLONE_ERR: "DataCloneError",
+        };
+
+        var name_code_map = {
+            IndexSizeError: 1,
+            HierarchyRequestError: 3,
+            WrongDocumentError: 4,
+            InvalidCharacterError: 5,
+            NoModificationAllowedError: 7,
+            NotFoundError: 8,
+            NotSupportedError: 9,
+            InUseAttributeError: 10,
+            InvalidStateError: 11,
+            SyntaxError: 12,
+            InvalidModificationError: 13,
+            NamespaceError: 14,
+            InvalidAccessError: 15,
+            TypeMismatchError: 17,
+            SecurityError: 18,
+            NetworkError: 19,
+            AbortError: 20,
+            URLMismatchError: 21,
+            TimeoutError: 23,
+            InvalidNodeTypeError: 24,
+            DataCloneError: 25,
+
+            EncodingError: 0,
+            NotReadableError: 0,
+            UnknownError: 0,
+            ConstraintError: 0,
+            DataError: 0,
+            TransactionInactiveError: 0,
+            ReadOnlyError: 0,
+            VersionError: 0,
+            OperationError: 0,
+            NotAllowedError: 0,
+            OptOutError: 0,
+        };
+
+        var code_name_map = {};
+        for (var key in name_code_map) {
+            if (name_code_map[key] > 0) {
+                code_name_map[name_code_map[key]] = key;
+            }
+        }
+
+        var required_props = {};
+        var name;
+
+        if (typeof type === "number") {
+            if (type === 0) {
+                throw new AssertionError(
+                    "Test bug: ambiguous DOMException code 0 passed to assert_throws_dom()",
+                );
+            }
+            if (type === 22) {
+                throw new AssertionError(
+                    "Test bug: QuotaExceededError needs to be tested for using assert_throws_quotaexceedederror()",
+                );
+            }
+            if (!(type in code_name_map)) {
+                throw new AssertionError(
+                    'Test bug: unrecognized DOMException code "' +
+                        type +
+                        '" passed to assert_throws_dom()',
+                );
+            }
+            name = code_name_map[type];
+            required_props.code = type;
+        } else if (typeof type === "string") {
+            if (name === "QuotaExceededError") {
+                throw new AssertionError(
+                    "Test bug: QuotaExceededError needs to be tested for using assert_throws_quotaexceedederror()",
+                );
+            }
+            name = type in codename_name_map ? codename_name_map[type] : type;
+            if (!(name in name_code_map)) {
+                throw new AssertionError(
+                    'Test bug: unrecognized DOMException code name or name "' +
+                        type +
+                        '" passed to assert_throws_dom()',
+                );
+            }
+
+            required_props.code = name_code_map[name];
+        }
+
+        if (
+            required_props.code === 0 ||
+            ("name" in e &&
+                e.name !== e.name.toUpperCase() &&
+                e.name !== "DOMException")
+        ) {
+            // New style exception: also test the name property.
+            required_props.name = name;
+        }
+
+        for (var prop in required_props) {
+            assert(
+                prop in e && e[prop] == required_props[prop],
+                assertion_type,
+                description,
+                "${func} threw ${e} that is not a DOMException " +
+                    type +
+                    ": property ${prop} is equal to ${actual}, expected ${expected}",
+                {
+                    func: func,
+                    e: e,
+                    prop: prop,
+                    actual: e[prop],
+                    expected: required_props[prop],
+                },
+            );
+        }
+
+        // FakeIndexedDB modification from the original test
+        // Here we just check if the error has the right superclass since we don't throw straight DOMExceptions
+        const testCondition =
+            e.constructor === constructor ||
+            Object.getPrototypeOf(e.constructor) === constructor;
+
+        // Check that the exception is from the right global.  This check is last
+        // so more specific, and more informative, checks on the properties can
+        // happen in case a totally incorrect exception is thrown.
+        assert(
+            testCondition,
+            assertion_type,
+            description,
+            "${func} threw an exception from the wrong global",
+            { func },
+        );
+    }
+}
+
+// Designed to limit tests based on a query string param, here we just run it
+function subsetTest(testFunc, ...args) {
+    return testFunc(...args);
+}
+
+const assert_true = (...args) => assert.ok(...args);
+
+class AsyncTest {
+    constructor(name) {
+        this.name = name;
+        this._completed = false;
+        this._cleanupCallbacks = [];
+
+        this._timeoutID = setTimeout(() => {
+            if (!this._completed) {
+                this.fail(new Error("Timed out!"));
+            }
+        }, 60 * 1000);
+    }
+
+    _complete(error) {
+        for (const cb of this._cleanupCallbacks) {
+            cb();
+        }
+        clearTimeout(this._timeoutID);
+        this._completed = true;
+        if (error) {
+            logTestResult(this.name, { passed: false, error: error.stack });
+        } else {
+            logTestResult(this.name, { passed: true });
+        }
+    }
+
+    done() {
+        if (!this._completed) {
+            this._complete();
+        } else {
+            throw new Error("AsyncTest.done() called multiple times");
+        }
+    }
+
+    step(fn, this_obj, ...args) {
+        try {
+            return fn.apply(this, args);
+        } catch (err) {
+            if (!this._completed) {
+                this.fail(err);
+            }
+        }
+    }
+
+    step_func(fn) {
+        return (...args) => {
+            try {
+                fn.apply(this, args);
+            } catch (err) {
+                if (!this._completed) {
+                    this.fail(err);
+                }
+            }
+        };
+    }
+
+    step_func_done(func, this_obj) {
+        var test_this = this;
+
+        if (arguments.length === 1) {
+            this_obj = test_this;
+        }
+
+        return function () {
+            if (func) {
+                test_this.step.apply(
+                    test_this,
+                    [func, this_obj].concat(
+                        Array.prototype.slice.call(arguments),
+                    ),
+                );
+            }
+            test_this.done();
+        };
+    }
+
+    step_timeout(fn, timeout, ...args) {
+        return setTimeout(
+            this.step_func(() => {
+                return fn.apply(this, args);
+            }),
+            timeout,
+        );
+    }
+
+    unreached_func(message) {
+        return () => {
+            if (!this._completed) {
+                this.fail(new Error(message));
+            }
+        };
+    }
+
+    fail(err) {
+        this._complete(err);
+    }
+
+    add_cleanup(cb) {
+        this._cleanupCallbacks.push(cb);
+    }
+}
+
+const async_test = (func, name) => {
+    if (typeof func !== "function") {
+        name = func;
+        func = null;
+    }
+    if (!name) {
+        name = generateTestName(func);
+    }
+    var test_obj = new AsyncTest(name);
+
+    if (func) {
+        test_obj.step(func, test_obj, test_obj);
+    }
+    return test_obj;
+};
+
+const test = (cb, name) => {
+    if (!name) {
+        name = generateTestName(cb);
+    }
+    try {
+        cb();
+        logTestResult(name, { passed: true });
+    } catch (error) {
+        logTestResult(name, { passed: false, error: error.stack });
+    }
+};
+
+/**
+ * Allow DOM events to be handled using Promises.
+ *
+ * This can make it a lot easier to test a very specific series of events,
+ * including ensuring that unexpected events are not fired at any point.
+ *
+ * `EventWatcher` will assert if an event occurs while there is no `wait_for`
+ * created Promise waiting to be fulfilled, or if the event is of a different type
+ * to the type currently expected. This ensures that only the events that are
+ * expected occur, in the correct order, and with the correct timing.
+ *
+ * @constructor
+ * @param {Test} test - The `Test` to use for the assertion.
+ * @param {EventTarget} watchedNode - The target expected to receive the events.
+ * @param {string[]} eventTypes - List of events to watch for.
+ * @param {Promise} timeoutPromise - Promise that will cause the
+ * test to be set to `TIMEOUT` once fulfilled.
+ *
+ */
+function EventWatcher(test, watchedNode, eventTypes, timeoutPromise) {
+    if (typeof eventTypes === "string") {
+        eventTypes = [eventTypes];
+    }
+
+    var waitingFor = null;
+
+    // This is null unless we are recording all events, in which case it
+    // will be an Array object.
+    var recordedEvents = null;
+
+    var eventHandler = test.step_func(function (evt) {
+        assert_true(
+            !!waitingFor,
+            "Not expecting event, but got " + evt.type + " event",
+        );
+        assert_equals(
+            evt.type,
+            waitingFor.types[0],
+            "Expected " +
+                waitingFor.types[0] +
+                " event, but got " +
+                evt.type +
+                " event instead",
+        );
+
+        if (Array.isArray(recordedEvents)) {
+            recordedEvents.push(evt);
+        }
+
+        if (waitingFor.types.length > 1) {
+            // Pop first event from array
+            waitingFor.types.shift();
+            return;
+        }
+        // We need to null out waitingFor before calling the resolve function
+        // since the Promise's resolve handlers may call wait_for() which will
+        // need to set waitingFor.
+        var resolveFunc = waitingFor.resolve;
+        waitingFor = null;
+        // Likewise, we should reset the state of recordedEvents.
+        var result = recordedEvents || evt;
+        recordedEvents = null;
+        resolveFunc(result);
+    });
+
+    for (var i = 0; i < eventTypes.length; i++) {
+        watchedNode.addEventListener(eventTypes[i], eventHandler, false);
+    }
+
+    /**
+     * Returns a Promise that will resolve after the specified event or
+     * series of events has occurred.
+     *
+     * @param {Object} options An optional options object. If the 'record' property
+     *                 on this object has the value 'all', when the Promise
+     *                 returned by this function is resolved,  *all* Event
+     *                 objects that were waited for will be returned as an
+     *                 array.
+     *
+     * @example
+     * const watcher = new EventWatcher(t, div, [ 'animationstart',
+     *                                            'animationiteration',
+     *                                            'animationend' ]);
+     * return watcher.wait_for([ 'animationstart', 'animationend' ],
+     *                         { record: 'all' }).then(evts => {
+     *   assert_equals(evts[0].elapsedTime, 0.0);
+     *   assert_equals(evts[1].elapsedTime, 2.0);
+     * });
+     */
+    this.wait_for = function (types, options) {
+        if (waitingFor) {
+            return Promise.reject("Already waiting for an event or events");
+        }
+        if (typeof types === "string") {
+            types = [types];
+        }
+        if (options && options.record && options.record === "all") {
+            recordedEvents = [];
+        }
+        return new Promise(function (resolve, reject) {
+            var timeout = test.step_func(function () {
+                // If the timeout fires after the events have been received
+                // or during a subsequent call to wait_for, ignore it.
+                if (!waitingFor || waitingFor.resolve !== resolve) return;
+
+                // This should always fail, otherwise we should have
+                // resolved the promise.
+                assert_true(
+                    waitingFor.types.length === 0,
+                    "Timed out waiting for " + waitingFor.types.join(", "),
+                );
+                var result = recordedEvents;
+                recordedEvents = null;
+                var resolveFunc = waitingFor.resolve;
+                waitingFor = null;
+                resolveFunc(result);
+            });
+
+            if (timeoutPromise) {
+                timeoutPromise().then(timeout);
+            }
+
+            waitingFor = {
+                types: types,
+                resolve: resolve,
+                reject: reject,
+            };
+        });
+    };
+
+    /**
+     * Stop listening for events
+     */
+    this.stop_watching = function () {
+        for (var i = 0; i < eventTypes.length; i++) {
+            watchedNode.removeEventListener(eventTypes[i], eventHandler, false);
+        }
+    };
+
+    test.add_cleanup(this.stop_watching);
+
+    return this;
+}
+
+const replacements = {
+    0: "0",
+    1: "x01",
+    2: "x02",
+    3: "x03",
+    4: "x04",
+    5: "x05",
+    6: "x06",
+    7: "x07",
+    8: "b",
+    9: "t",
+    10: "n",
+    11: "v",
+    12: "f",
+    13: "r",
+    14: "x0e",
+    15: "x0f",
+    16: "x10",
+    17: "x11",
+    18: "x12",
+    19: "x13",
+    20: "x14",
+    21: "x15",
+    22: "x16",
+    23: "x17",
+    24: "x18",
+    25: "x19",
+    26: "x1a",
+    27: "x1b",
+    28: "x1c",
+    29: "x1d",
+    30: "x1e",
+    31: "x1f",
+    "0xfffd": "ufffd",
+    "0xfffe": "ufffe",
+    "0xffff": "uffff",
+};
+
+function format_value(val, seen) {
+    if (!seen) {
+        seen = [];
+    }
+    if (typeof val === "object" && val !== null) {
+        if (seen.indexOf(val) >= 0) {
+            return "[...]";
+        }
+        seen.push(val);
+    }
+    if (Array.isArray(val)) {
+        return (
+            "[" +
+            val
+                .map(function (x) {
+                    return format_value(x, seen);
+                })
+                .join(", ") +
+            "]"
+        );
+    }
+
+    switch (typeof val) {
+        case "string":
+            val = val.replace("\\", "\\\\");
+            for (var p in replacements) {
+                var replace = "\\" + replacements[p];
+                val = val.replace(RegExp(String.fromCharCode(p), "g"), replace);
+            }
+            return '"' + val.replace(/"/g, '\\"') + '"';
+        case "boolean":
+        case "undefined":
+            return String(val);
+        case "number":
+            // In JavaScript, -0 === 0 and String(-0) == "0", so we have to
+            // special-case.
+            if (val === -0 && 1 / val === -Infinity) {
+                return "-0";
+            }
+            return String(val);
+        case "object":
+            if (val === null) {
+                return "null";
+            }
+
+            // Special-case Node objects, since those come up a lot in my tests.  I
+            // ignore namespaces.
+            if (is_node(val)) {
+                switch (val.nodeType) {
+                    case Node.ELEMENT_NODE:
+                        var ret = "<" + val.localName;
+                        for (var i = 0; i < val.attributes.length; i++) {
+                            ret +=
+                                " " +
+                                val.attributes[i].name +
+                                '="' +
+                                val.attributes[i].value +
+                                '"';
+                        }
+                        ret += ">" + val.innerHTML + "</" + val.localName + ">";
+                        return "Element node " + truncate(ret, 60);
+                    case Node.TEXT_NODE:
+                        return 'Text node "' + truncate(val.data, 60) + '"';
+                    case Node.PROCESSING_INSTRUCTION_NODE:
+                        return (
+                            "ProcessingInstruction node with target " +
+                            format_value(truncate(val.target, 60)) +
+                            " and data " +
+                            format_value(truncate(val.data, 60))
+                        );
+                    case Node.COMMENT_NODE:
+                        return (
+                            "Comment node <!--" + truncate(val.data, 60) + "-->"
+                        );
+                    case Node.DOCUMENT_NODE:
+                        return (
+                            "Document node with " +
+                            val.childNodes.length +
+                            (val.childNodes.length == 1
+                                ? " child"
+                                : " children")
+                        );
+                    case Node.DOCUMENT_TYPE_NODE:
+                        return "DocumentType node";
+                    case Node.DOCUMENT_FRAGMENT_NODE:
+                        return (
+                            "DocumentFragment node with " +
+                            val.childNodes.length +
+                            (val.childNodes.length == 1
+                                ? " child"
+                                : " children")
+                        );
+                    default:
+                        return "Node object of unknown type";
+                }
+            }
+
+        /* falls through */
+        default:
+            try {
+                return typeof val + ' "' + truncate(String(val), 1000) + '"';
+            } catch (e) {
+                return (
+                    "[stringifying object threw " +
+                    String(e) +
+                    " with type " +
+                    String(typeof e) +
+                    "]"
+                );
+            }
+    }
+}
+
+let active_promise_test;
+const promise_test = (func, name, properties) => {
+    var test = async_test(name, properties);
+    // If there is no promise tests queue make one.
+    if (!active_promise_test) {
+        active_promise_test = Promise.resolve();
+    }
+    active_promise_test = active_promise_test.then(function () {
+        var donePromise = new Promise(function (resolve) {
+            test.add_cleanup(resolve);
+        });
+        var promise = test.step(func, test, test);
+        test.step(function () {
+            assert_not_equals(promise, undefined);
+        });
+        Promise.resolve(promise)
+            .then(function () {
+                test.done();
+            })
+            .catch(
+                test.step_func(function (value) {
+                    throw value;
+                }),
+            );
+        return donePromise;
+    });
+};
+
+const setup = () => {};
+
+const step_timeout = (fn, timeout, ...args) => {
+    return setTimeout(() => {
+        fn(...args);
+    }, timeout);
+};
+
+// Returns a new function. After it is called |count| times, |func|
+// will be called.
+function barrier_func(count, func) {
+    let n = 0;
+    return () => {
+        if (++n === count) func();
+    };
+}
+
+/**
+ * Alias for :js:func:`insert_inherits`.
+ *
+ * @param {Object} object - Object that should have the given property in its prototype chain.
+ * @param {string} property_name - Expected property name.
+ * @param {string} [description] - Description of the condition being tested.
+ */
+function assert_idl_attribute(object, property_name, description) {
+    return _assert_inherits("assert_idl_attribute")(
+        object,
+        property_name,
+        description,
+    );
+}
+
+function _assert_inherits(name) {
+    return function (object, property_name, description) {
+        assert(
+            (typeof object === "object" && object !== null) ||
+                typeof object === "function" ||
+                // Or has [[IsHTMLDDA]] slot
+                String(object) === "[object HTMLAllCollection]",
+            name,
+            description,
+            "provided value is not an object",
+        );
+
+        assert(
+            "hasOwnProperty" in object,
+            name,
+            description,
+            "provided value is an object but has no hasOwnProperty method",
+        );
+
+        assert(
+            !object.hasOwnProperty(property_name),
+            name,
+            description,
+            "property ${p} found on object expected in prototype chain",
+            { p: property_name },
+        );
+
+        assert(
+            property_name in object,
+            name,
+            description,
+            "property ${p} not found in prototype chain",
+            { p: property_name },
+        );
+    };
+}
+
+/**
+ * Assert that ``object`` does not have an own property with name
+ * ``property_name``, but inherits one through the prototype chain.
+ *
+ * @param {Object} object - Object that should have the given property in its prototype chain.
+ * @param {string} property_name - Expected property name.
+ * @param {string} [description] - Description of the condition being tested.
+ */
+function assert_inherits(object, property_name, description) {
+    return _assert_inherits("assert_inherits")(
+        object,
+        property_name,
+        description,
+    );
+}
+
+/**
+ * Assert that ``object`` has an own property with name ``property_name``.
+ *
+ * @param {Object} object - Object that should have the given property.
+ * @param {string} property_name - Expected property name.
+ * @param {string} [description] - Description of the condition being tested.
+ */
+function assert_own_property(object, property_name, description) {
+    assert(
+        object.hasOwnProperty(property_name),
+        "assert_own_property",
+        description,
+        "expected property ${p} missing",
+        { p: property_name },
+    );
+}
+
+const addToGlobal = {
+    add_completion_callback,
+    assert_array_equals,
+    assert_class_string,
+    assert_equals,
+    assert_false,
+    assert_idl_attribute,
+    assert_inherits,
+    assert_key_equals,
+    assert_object_equals,
+    assert_own_property,
+    assert_not_equals,
+    assert_readonly,
+    assert_throws,
+    assert_throws_dom,
+    assert_throws_exactly,
+    assert_throws_js,
+    assert_true,
+    assert_unreached,
+    async_test,
+    barrier_func,
+    EventWatcher,
+    format_value,
+    promise_test,
+    setup,
+    step_timeout,
+    subsetTest,
+    test,
+};
+
+Object.assign(global, addToGlobal);

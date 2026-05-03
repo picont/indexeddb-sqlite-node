@@ -1,0 +1,2 @@
+# Asserts that a SharedArrayBuffer fails to serialize in a cross-origin-isolated page, which isn't relevant to Node
+skip = true

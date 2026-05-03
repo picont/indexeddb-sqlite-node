@@ -1,0 +1,2 @@
+# Relies on an <input type=file> which is hard for us to simulate and not relevant for Node.js
+skip = true
